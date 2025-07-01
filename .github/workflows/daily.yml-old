@@ -1,64 +1,33 @@
-name: Node.js daily update build
+name: Node.js daily build job
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: 0 3 * * *
+    - cron: 0 0 * * *
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      versions: ${{ steps.set-versions.outputs.versions }}
-    steps:
-      - name: Get latest patch versions of 20, 22, 23, 24
-        id: set-versions
-        run: |
-          majors=(20 22 23 24)
-          all_versions=()
-          for m in "${majors[@]}"; do
-            vs=$(curl -s https://nodejs.org/download/release/index.json | \
-              jq -r --arg m "$m" '.[] | select(.version | test("^v"+$m+"\\.")) | .version' | \
-              sort -Vr | head -n 5)
-            while read -r v; do
-              all_versions+=("$v")
-            done <<< "$vs"
-          done
-          # 将 Bash 数组转换为 JSON 字符串
-          json=$(printf '%s\n' "${all_versions[@]}" | jq -R . | jq -s -c .)
-
-          # 使用 EOF 块安全设置输出
-          echo "versions<<EOF" >> $GITHUB_OUTPUT
-          echo "$json" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          #          out="["
-          #          for m in "${majors[@]}"; do
-          #            v=$(curl -s https://nodejs.org/download/release/index.json | \
-          #              jq -r --arg m "$m" '.[] | select(.version | test("^v"+$m+"\\.")) | .version' | \
-          #              sort -Vr | head -n 5)
-          #            out="$out\"$v\","
-          #          done
-          #          out="${out%,}]"
-          #          echo "versions=$out" >> $GITHUB_OUTPUT
-
   build-daily:
-    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         name: ['node']
         binaries: ['glibc', 'musl']
-        version: ${{ fromJson(needs.prepare.outputs.versions) }}
+        version: ['20', '22', '23', '24']
         latest_version: ['24']
 
     steps:
-      - name: Set up version info
+      - name: Check version
         run: |
-          version=${{ matrix.version }}
+          version=$(curl -s https://nodejs.org/download/release/index.json | jq -r '.[] | .version' | grep -E '^v'"${{ matrix.version }}" | head -n 1)
+          if [ -z "${version}" ]; then
+            echo "Node.js version not found"
+            exit 1
+          fi
           echo "version=${version}" >> $GITHUB_ENV
           echo "Node.js current version: ${version}"
-          major_version=$(echo $version | sed 's/^v//; s/\..*//')
+
+          major_version=$(echo ${{ matrix.version }} | sed 's/^v//')
           echo "major_version=${major_version}" >> $GITHUB_ENV
 
       - name: Check release
@@ -152,4 +121,3 @@ jobs:
           gh release upload ${{ env.version }} -R ${{ github.repository }} ${{ github.workspace }}/workdir/staging/release/${{ env.version }}/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
